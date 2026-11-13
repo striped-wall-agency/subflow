@@ -13,9 +13,9 @@ const plans: DemoPlan[] = [
   { id: 'studio', name: 'Studio', description: 'More room for growing teams.', monthlyCents: 4900, annualCents: 49000, archived: false },
   { id: 'scale', name: 'Scale', description: 'Tools for teams going further.', monthlyCents: 9900, annualCents: 99000, archived: false },
 ]
-const seed: State = { date: '2026-01-15T00:00:00.000Z', customerId: '1', plans, attempts: [], customers: [
+const seed: State = { date: '2026-01-15T00:00:00.000Z', customerId: '1', plans, attempts: [{ obligationId: 'sub-3:2026-01-01T00:00:00.000Z', subscriptionId: 'sub-3', boundary: '2026-01-01T00:00:00.000Z', amountCents: 4900, outcome: 'failed' }], customers: [
   ['1', 'Alex Morgan', 'Northstar Studio', 'Active'], ['2', 'Jamie Chen', 'Fieldwork Co.', 'Trialing'], ['3', 'Taylor Brooks', 'Bloom House', 'Past Due'], ['4', 'Jordan Lee', 'Common Ground', 'Scheduled to Cancel'], ['5', 'Sam Rivera', 'Good Company', 'Canceled'],
-].map(([id, name, company, status]) => ({ id, name, company, email: `${name.toLowerCase().replace(' ', '.')}@example.com`, method: 'Visa •4242', subscription: { id: `sub-${id}`, planId: 'studio', interval: 'monthly', status: status as Subscription['status'], periodStart: '2026-01-01T00:00:00.000Z', periodEnd: '2026-02-01T00:00:00.000Z', renewalEnabled: status !== 'Scheduled to Cancel' && status !== 'Canceled' } })) }
+].map(([id, name, company, status]) => ({ id, name, company, email: `${name.toLowerCase().replace(' ', '.')}@example.com`, method: 'Visa •4242', subscription: { id: `sub-${id}`, planId: 'studio', interval: 'monthly', status: status as Subscription['status'], periodStart: '2026-01-01T00:00:00.000Z', periodEnd: status === 'Past Due' ? '2026-01-01T00:00:00.000Z' : '2026-02-01T00:00:00.000Z', renewalEnabled: status !== 'Scheduled to Cancel' && status !== 'Canceled' } })) }
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`
 const date = (value: string) => new Date(value).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' })
 
