@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { advanceSubscription, cancelSubscription, resumeSubscription, retryPayment, scheduleChange, type Interval, type Subscription } from './domain'
 import { openDatabase, readSnapshot, writeSnapshot } from './storage'
 import './style.css'
@@ -33,6 +33,7 @@ function App() {
   const [interval, setInterval] = useState<Interval>('monthly')
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const navigate = useNavigate()
+  const location = useLocation()
   useEffect(() => { let active = true; openDatabase().then(async database => { const stored = await readSnapshot<State>(database); if (!stored) await writeSnapshot(database, structuredClone(seed)); if (active) { setDb(database); setData(stored ? { ...stored, attempts: stored.attempts ?? [] } : structuredClone(seed)); setRole(stored?.role ?? 'customer') } }).catch(() => active && setError('Demo storage is unavailable. Please reload and try again.')); return () => { active = false } }, [])
   useEffect(() => {
     if (!db) return
