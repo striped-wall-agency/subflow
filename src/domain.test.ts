@@ -30,10 +30,15 @@ describe('billing boundaries', () => {
     const failed = advanceSubscription(sub, plans, sub.periodEnd, true)
     expect(failed.subscription.status).toBe('Past Due')
     expect(advanceSubscription(failed.subscription, plans, '2026-04-01T00:00:00.000Z', true).attempts).toHaveLength(0)
-    const paid = retryPayment(failed.subscription, failed.attempts[0], false)
+    const paid = retryPayment(failed.subscription, failed.attempts[0], false, sub.periodEnd)
     expect(paid.subscription.status).toBe('Active')
     expect(paid.subscription.periodStart).toBe(sub.periodEnd)
-    expect(() => retryPayment(paid.subscription, paid.attempt, false)).toThrow()
+    expect(() => retryPayment(paid.subscription, paid.attempt, false, sub.periodEnd)).toThrow()
+  })
+  it('does not retry a canceled subscription after its access expires', () => {
+    const failed = advanceSubscription(sub, plans, sub.periodEnd, true)
+    const canceled = cancelSubscription(failed.subscription)
+    expect(() => retryPayment(canceled, failed.attempts[0], false, sub.periodEnd)).toThrow()
   })
 })
 

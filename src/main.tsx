@@ -50,7 +50,7 @@ function App() {
     const debt = [...data!.attempts].reverse().find(a => a.subscriptionId === c.subscription.id && a.outcome === 'failed')
     if (!debt || !window.confirm(`Retry payment of ${money(debt.amountCents)} for ${c.name}?`)) return
     try {
-      const result = retryPayment(c.subscription, debt, c.method === 'Failing method')
+      const result = retryPayment(c.subscription, debt, c.method === 'Failing method', data!.date)
       void save({ ...data!, customers: data!.customers.map(item => item.id === c.id ? { ...item, subscription: result.subscription } : item), attempts: [...data!.attempts, result.attempt] })
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Payment retry failed.') }
   }

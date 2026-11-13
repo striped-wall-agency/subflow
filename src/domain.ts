@@ -60,8 +60,8 @@ export function advanceSubscription(subscription: Subscription, plans: Plan[], u
   return { subscription: current, attempts }
 }
 
-export function retryPayment(subscription: Subscription, debt: PaymentAttempt, failing: boolean): { subscription: Subscription; attempt: PaymentAttempt } {
-  if (debt.outcome !== 'failed' || debt.subscriptionId !== subscription.id || subscription.periodEnd !== debt.boundary || (subscription.status !== 'Past Due' && !(subscription.status === 'Scheduled to Cancel' && subscription.previousStatus === 'Past Due'))) {
+export function retryPayment(subscription: Subscription, debt: PaymentAttempt, failing: boolean, now: string): { subscription: Subscription; attempt: PaymentAttempt } {
+  if (debt.outcome !== 'failed' || debt.subscriptionId !== subscription.id || subscription.periodEnd !== debt.boundary || (subscription.status !== 'Past Due' && !(subscription.status === 'Scheduled to Cancel' && subscription.previousStatus === 'Past Due' && now < subscription.periodEnd))) {
     throw new Error('This payment cannot be retried.')
   }
   const attempt: PaymentAttempt = { ...debt, outcome: failing ? 'failed' : 'success' }
