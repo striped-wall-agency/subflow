@@ -32,6 +32,43 @@ export interface Subscription {
   previousStatus?: Status
 }
 
+export interface PaymentAttempt {
+  obligationId: string
+  subscriptionId: string
+  boundary: string
+  amountCents: number
+  outcome: 'success' | 'failed'
+}
+
+export function advanceSubscription(subscription: Subscription, plans: Plan[], until: string, failing: boolean): { subscription: Subscription; attempts: PaymentAttempt[] } {
+  let current = { ...subscription }
+  const attempts: PaymentAttempt[] = []
+  while (current.periodEnd <= until && current.status !== 'Canceled' && current.status !== 'Past Due') {
+    if (!current.renewalEnabled) {
+      current = { ...current, status: 'Canceled' }
+      break
+    }
+    const boundary = current.periodEnd
+    const planId = current.pendingChange?.planId ?? current.planId
+    const interval = current.pendingChange?.interval ?? current.interval
+    const plan = plans.find(item => item.id === planId)
+    if (!plan) throw new Error('Subscription plan is missing.')
+    const attempt: PaymentAttempt = { obligationId: `${current.id}:${boundary}`, subscriptionId: current.id, boundary, amountCents: interval === 'monthly' ? plan.monthlyCents : plan.annualCents, outcome: failing ? 'failed' : 'success' }
+    attempts.push(attempt)
+    current = { ...current, planId, interval, pendingChange: undefined, status: failing ? 'Past Due' : 'Active', ...(failing ? {} : { periodStart: boundary, periodEnd: addPeriod(boundary, interval) }) }
+  }
+  return { subscription: current, attempts }
+}
+
+export function retryPayment(subscription: Subscription, debt: PaymentAttempt, failing: boolean): { subscription: Subscription; attempt: PaymentAttempt } {
+  if (debt.outcome !== 'failed' || debt.subscriptionId !== subscription.id || subscription.periodEnd !== debt.boundary || (subscription.status !== 'Past Due' && !(subscription.status === 'Scheduled to Cancel' && subscription.previousStatus === 'Past Due'))) {
+    throw new Error('This payment cannot be retried.')
+  }
+  const attempt: PaymentAttempt = { ...debt, outcome: failing ? 'failed' : 'success' }
+  if (failing) return { subscription, attempt }
+  return { subscription: { ...subscription, status: subscription.renewalEnabled ? 'Active' : 'Scheduled to Cancel', previousStatus: subscription.renewalEnabled ? undefined : 'Active', periodStart: debt.boundary, periodEnd: addPeriod(debt.boundary, subscription.interval) }, attempt }
+}
+
 export function scheduleChange(subscription: Subscription, plan: Plan, interval: Interval): Subscription {
   if (subscription.status === 'Canceled' || subscription.status === 'Past Due' || plan.archived) {
     throw new Error('This plan change is unavailable.')
