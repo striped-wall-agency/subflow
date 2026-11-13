@@ -1,0 +1,118 @@
+import { useEffect, useRef, useState } from 'react'
+import { createRoot } from 'react-dom/client'
+import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { advanceSubscription, cancelSubscription, resumeSubscription, retryPayment, scheduleChange, type Interval, type Subscription } from './domain'
+import { openDatabase, readSnapshot, writeSnapshot } from './storage'
+import './style.css'
+import { ActivityList, Catalog, Detail, Directory } from './admin'
+import { PaymentIssues } from './issues'
+import { BillingHistory } from './history'
+import { describeChanges, type State, type DemoPlan, type Customer } from './model'
+
+const plans: DemoPlan[] = [
+  { id: 'core', name: 'Core', description: 'A thoughtful start for small teams.', monthlyCents: 1900, annualCents: 19000, archived: false },
+  { id: 'studio', name: 'Studio', description: 'More room for growing teams.', monthlyCents: 4900, annualCents: 49000, archived: false },
+  { id: 'scale', name: 'Scale', description: 'Tools for teams going further.', monthlyCents: 9900, annualCents: 99000, archived: false },
+]
+const seed: State = { date: '2026-01-15T00:00:00.000Z', customerId: '1', plans, attempts: [{ obligationId: 'sub-3:2026-01-01T00:00:00.000Z', subscriptionId: 'sub-3', boundary: '2026-01-01T00:00:00.000Z', amountCents: 4900, outcome: 'failed' }], customers: [
+  ['1', 'Alex Morgan', 'Northstar Studio', 'Active'], ['2', 'Jamie Chen', 'Fieldwork Co.', 'Trialing'], ['3', 'Taylor Brooks', 'Bloom House', 'Past Due'], ['4', 'Jordan Lee', 'Common Ground', 'Scheduled to Cancel'], ['5', 'Sam Rivera', 'Good Company', 'Canceled'],
+].map(([id, name, company, status]) => ({ id, name, company, email: `${name.toLowerCase().replace(' ', '.')}@example.com`, method: id === '3' ? 'Failing method' : 'Visa •4242', subscription: { id: `sub-${id}`, planId: 'studio', interval: 'monthly', status: status as Subscription['status'], pendingChange: id === '1' ? { planId: 'scale', interval: 'monthly' as const } : undefined, periodStart: '2026-01-01T00:00:00.000Z', periodEnd: status === 'Past Due' || status === 'Canceled' ? '2026-01-01T00:00:00.000Z' : '2026-02-01T00:00:00.000Z', renewalEnabled: status !== 'Scheduled to Cancel' && status !== 'Canceled' } })) }
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`
+const date = (value: string) => new Date(value).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' })
+
+function App() {
+  const [db, setDb] = useState<IDBDatabase>()
+  const [data, setData] = useState<State>()
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const saving = useRef(false)
+  const [success, setSuccess] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [paymentDraft, setPaymentDraft] = useState<Customer>()
+  const [role, setRole] = useState<'customer' | 'admin'>('customer')
+  const [interval, setInterval] = useState<Interval>('monthly')
+  const [selectedPlanId, setSelectedPlanId] = useState('')
+  const navigate = useNavigate()
+  useEffect(() => { let active = true; openDatabase().then(async database => { const stored = await readSnapshot<State>(database); if (!stored) await writeSnapshot(database, structuredClone(seed)); if (active) { setDb(database); setData(stored ? { ...stored, attempts: stored.attempts ?? [] } : structuredClone(seed)); setRole(stored?.role ?? 'customer') } }).catch(() => active && setError('Demo storage is unavailable. Please reload and try again.')); return () => { active = false } }, [])
+  useEffect(() => {
+    if (!db) return
+    const channel = new BroadcastChannel('subflow-updates')
+    channel.onmessage = () => { void readSnapshot<State>(db).then(next => { if (next) setData(next) }).catch(() => setError('Could not refresh shared demo data. Reload to retry.')) }
+    return () => channel.close()
+  }, [db])
+  async function save(next: State): Promise<boolean> {
+    if (!db || saving.current || !data) return false
+    saving.current = true; setBusy(true); setError(''); setSuccess('')
+    const before = JSON.stringify({ customers: data.customers, plans: data.plans, date: data.date, reviews: data.reviews })
+    const after = JSON.stringify({ customers: next.customers, plans: next.plans, date: next.date, reviews: next.reviews })
+    const snapshot = { ...next, revision: (data.revision ?? 0) + 1, events: before === after ? next.events : [...(next.events ?? []), { id: crypto.randomUUID(), time: next.date, actor: location.pathname.startsWith('/admin') ? 'Admin' : 'Customer', ...describeChanges(data, next) }] }
+    try { if (data.diagnostic === 'write error' && next.diagnostic === data.diagnostic) throw new Error('Simulated write failure'); await writeSnapshot(db, snapshot, data.revision ?? 0); setData(snapshot); setSuccess('Changes saved.'); const channel = new BroadcastChannel('subflow-updates'); channel.postMessage('updated'); channel.close(); return true }
+    catch { setError('Changes could not be saved. Another tab may have changed the demo. Reload to refresh, then try again.'); return false }
+    finally { saving.current = false; setBusy(false) }
+  }
+  if (!data) return <main className="entry"><p className="eyebrow">SUBFLOW / BY STRIPED WALL</p><h1>Subscriptions, in a better place.</h1><p>{error || 'Loading demo…'}</p>{error && <button onClick={() => window.location.reload()}>Retry</button>}</main>
+  const customer = data.customers.find(c => c.id === data.customerId) ?? data.customers[0]
+  const sub = customer.subscription
+  const plan = data.plans.find(p => p.id === sub.planId) ?? data.plans[0]
+  const updateCustomer = (updated: Customer) => save({ ...data, customers: data.customers.map(c => c.id === updated.id ? updated : c) })
+  const updateSub = (subscription: Subscription) => updateCustomer({ ...customer, subscription })
+  function advanceTime(boundary = false) {
+    const nearest = data!.customers.map(c => c.subscription).filter(s => s.periodEnd > data!.date && s.status !== 'Canceled' && s.status !== 'Past Due').map(s => s.periodEnd).sort()[0]
+    const nextDate = boundary && nearest ? nearest : new Date(new Date(data!.date).getTime() + 86400000).toISOString()
+    if (!window.confirm(`Advance demo time to ${date(nextDate)}?`)) return
+    const attempts = [...data!.attempts]
+    const customers = data!.customers.map(c => {
+      const result = advanceSubscription(c.subscription, data!.plans, nextDate, c.method === 'Failing method')
+      attempts.push(...result.attempts)
+      return { ...c, subscription: result.subscription }
+    })
+    void save({ ...data!, date: nextDate, customers, attempts })
+  }
+  function retryCustomerPayment(c: Customer) {
+    const debt = [...data!.attempts].reverse().find(a => a.subscriptionId === c.subscription.id && a.outcome === 'failed')
+    if (!debt || !window.confirm(`Retry payment of ${money(debt.amountCents)} for ${c.name}?`)) return
+    try {
+      const result = retryPayment(c.subscription, debt, c.method === 'Failing method', data!.date)
+      void save({ ...data!, customers: data!.customers.map(item => item.id === c.id ? { ...item, subscription: result.subscription } : item), attempts: [...data!.attempts, result.attempt] })
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Payment retry failed.') }
+  }
+  const entry = <main className="entry"><p className="eyebrow">SUBFLOW / BY STRIPED WALL</p><h1>Subscriptions, in a better place.</h1><p>Explore a calmer way to manage subscriptions.</p><div className="notice">Demo / No real charges. All customers and payments are fictional.</div><div className="grid"><button className={role === 'customer' ? 'choice selected' : 'choice'} onClick={() => { setRole('customer'); void save({ ...data, role: 'customer' }) }}><strong>Customer</strong><span>Manage a subscription and billing.</span></button><button className={role === 'admin' ? 'choice selected' : 'choice'} onClick={() => { setRole('admin'); void save({ ...data, role: 'admin' }) }}><strong>Admin</strong><span>See your customers and plans.</span></button></div><label>Choose a customer<select value={customer.id} onChange={e => void save({ ...data, customerId: e.target.value })}>{data.customers.map(c => <option key={c.id} value={c.id}>{c.name} · {c.company} · {c.subscription.status}</option>)}</select></label><button disabled={busy} onClick={() => navigate(`/${role}/overview`)}>Enter demo →</button></main>
+  const customerNav = [['Overview', '/customer/overview'], ['Plan & Billing', '/customer/billing'], ['Change plan', '/customer/change-plan'], ['Billing history', '/customer/history'], ['Payment details', '/customer/payment'], ['Settings', '/customer/settings']]
+  const adminNav = [['Overview', '/admin/overview'], ['Customers', '/admin/customers'], ['Subscriptions', '/admin/subscriptions'], ['Plans', '/admin/plans'], ['Payment issues', '/admin/payment-issues']]
+  const nav = location.pathname.startsWith('/admin') ? adminNav : customerNav
+  const shell = (content: React.ReactNode) => <div className="shell"><aside><Link className="brand" to="/demo">◉ Subflow <small>by Striped Wall</small></Link><p className="sidebar-label">WORKSPACE</p><button className="mobile-menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>Menu</button><nav className={menuOpen ? 'open' : ''}>{nav.map(([name, path]) => <Link key={path} to={path} aria-current={location.pathname === path ? 'page' : undefined} onClick={() => setMenuOpen(false)}>{name}</Link>)}</nav><Link className="switch" to="/demo">↗ Switch role</Link></aside><div className="workspace"><header><span>{location.pathname.startsWith('/admin') ? 'Admin' : customer.name} · Demo / No real charges</span><span>Demo date: {date(data.date)}</span><button className="quiet" disabled={busy} onClick={() => advanceTime()}>Advance one day</button><button className="quiet" disabled={busy} onClick={() => { if (window.confirm('Reset all demo data?')) void save(structuredClone(seed)) }}>Reset demo data</button><button className="quiet" disabled={busy} onClick={() => advanceTime(true)}>Next boundary</button></header><main>{error && <div role="alert" className="notice">{error}</div>}<p role="status">{success}</p><details><summary>Demo diagnostics</summary><label>Simulate state<select value={data.diagnostic ?? 'normal'} onChange={e => void save({ ...data, diagnostic: e.target.value })}>{['normal', 'loading', 'empty', 'read error', 'write error'].map(mode => <option key={mode}>{mode}</option>)}</select></label><p>Choose normal to return. Simulations never delete data.</p></details>{data.diagnostic === 'loading' ? <p role="status">Loading demo…</p> : data.diagnostic === 'empty' ? <div className="card"><h2>No results yet</h2><p>Return diagnostics to normal to explore the seeded data.</p></div> : data.diagnostic === 'read error' ? <div role="alert" className="notice">Demo data could not be read. <button onClick={() => void save({ ...data, diagnostic: 'normal' })}>Retry</button></div> : content}</main></div></div>
+  const heading = (title: string, subtitle: string) => <><p className="eyebrow">SUBFLOW / {nav === adminNav ? 'ADMIN' : 'CUSTOMER'}</p><h1>{title}</h1><p className="muted">{subtitle}</p></>
+  const summary = <div className="card hero"><p className="eyebrow">YOUR SUBSCRIPTION</p><div className="row"><div><h2>{plan.name} plan</h2><p>{money(sub.interval === 'monthly' ? plan.monthlyCents : plan.annualCents)} / {sub.interval === 'monthly' ? 'month' : 'year'}</p></div><span className="badge">{sub.status}</span></div><p>{sub.status === 'Canceled' ? 'This subscription has ended.' : `Current period ends ${date(sub.periodEnd)}.`}</p><Link className="button" to="/customer/billing">View billing →</Link></div>
+  const overview = <>{heading(`Welcome back, ${customer.name.split(' ')[0]}.`, 'Everything you need to know about your subscription.')}{sub.status === 'Past Due' && <div className="notice">Payment needs attention. Update your demo method and ask an admin to retry.</div>}{summary}<ActivityList data={data}/><div className="grid"><div className="card"><h3>Next payment</h3><p>{sub.renewalEnabled ? date(sub.periodEnd) : 'Renewal is off'}</p></div><div className="card"><h3>Payment method</h3><p>{customer.method}</p><Link to="/customer/payment">Update details →</Link></div></div></>
+  const billing = <>{heading('Plan & Billing', 'Your subscription, all in one place.')}{summary}{sub.pendingChange && <div className="card"><h3>Upcoming change</h3><p>{data.plans.find(p => p.id === sub.pendingChange?.planId)?.name} · {sub.pendingChange.interval} from {date(sub.periodEnd)}</p><button className="quiet" onClick={() => { if (window.confirm('Cancel the pending change?')) void updateSub({ ...sub, pendingChange: undefined }) }}>Cancel change</button></div>}<div className="actions"><Link className="button" to="/customer/change-plan">Change plan</Link><Link to="/customer/history">Billing history →</Link></div></>
+  const selectedPlan = data.plans.find(p => p.id === selectedPlanId && !p.archived)
+  const change = <>{heading('Find the right plan', 'Changes take effect at the end of your current period. No proration.')}<div className="actions"><button className="quiet" onClick={() => setInterval('monthly')}>Monthly</button><button className="quiet" onClick={() => setInterval('annual')}>Annual</button><span>Selected: {interval}</span></div><div className="grid plans">{data.plans.map(p => <div className="card" key={p.id}><p className="eyebrow">{p.archived ? 'ARCHIVED' : p.id === selectedPlanId ? 'SELECTED' : p.id === sub.planId && interval === sub.interval ? 'CURRENT PLAN' : 'SUBFLOW'}</p><h2>{p.name}</h2><p>{p.description}</p><p>{p.features ?? 'Subscription management · Billing history · Team support'}</p><h2>{money(interval === 'monthly' ? p.monthlyCents : p.annualCents)} <small>/ {interval === 'monthly' ? 'mo' : 'yr'}</small></h2><button disabled={busy || p.archived || sub.status === 'Canceled' || sub.status === 'Past Due'} onClick={() => setSelectedPlanId(p.id)}>Choose {p.name}</button></div>)}</div>{(sub.status === 'Canceled' || sub.status === 'Past Due') && <p>Plan changes are unavailable for {sub.status} subscriptions.</p>}{selectedPlan && <div className="card"><h2>Selected plan</h2><p>{selectedPlan.name} · {money(interval === 'monthly' ? selectedPlan.monthlyCents : selectedPlan.annualCents)} / {interval}</p><button disabled={busy} onClick={() => { if (window.confirm(`Change from ${plan.name} (${sub.interval}) to ${selectedPlan.name} (${interval}) for ${money(interval === 'monthly' ? selectedPlan.monthlyCents : selectedPlan.annualCents)} on ${date(sub.periodEnd)}? No proration applies.`)) void updateSub(scheduleChange(sub, selectedPlan, interval)) }}>Review change</button></div>}</>
+  const paymentForm = paymentDraft ?? customer
+  const payment = <>{heading('Payment details', 'Use a fictional payment method for this demo.')}<form className="card" onSubmit={e => { e.preventDefault(); void save({ ...data, customers: data.customers.map(c => c.id === customer.id ? paymentForm : c) }).then(ok => { if (ok) setPaymentDraft(undefined) }) }}><label>Demo payment method<select value={paymentForm.method} onChange={e => setPaymentDraft({ ...paymentForm, method: e.target.value })}><option>Visa •4242</option><option>Mastercard •4444</option><option>Failing method</option></select></label><label>Billing name<input required value={paymentForm.billingName ?? paymentForm.name} onChange={e => setPaymentDraft({ ...paymentForm, billingName: e.target.value })} /></label><label>Billing email<input type="email" required value={paymentForm.billingEmail ?? paymentForm.email} onChange={e => setPaymentDraft({ ...paymentForm, billingEmail: e.target.value })} /></label><label>Billing address<textarea required value={paymentForm.address ?? ''} onChange={e => setPaymentDraft({ ...paymentForm, address: e.target.value })} /></label><p className="muted">No real card details are collected.</p><div className="actions"><button disabled={busy}>Save payment details</button><button type="button" className="quiet" onClick={() => setPaymentDraft(undefined)}>Cancel</button></div></form></>
+
+  const accessExpired = sub.status === 'Canceled' || (!sub.renewalEnabled && data.date >= sub.periodEnd)
+  const settings = <>
+    {heading('Subscription settings', 'Manage your renewal preferences.')}
+    <div className="card">
+      <h2>Renewal</h2>
+      <p>{sub.renewalEnabled ? `Your subscription renews on ${date(sub.periodEnd)}.` : 'Automatic renewal is off.'}</p>
+      <p>{accessExpired ? `Access ended on ${date(sub.periodEnd)}. This subscription cannot be resumed.` : `Access continues until ${date(sub.periodEnd)}.`}</p>
+      {sub.pendingChange && <p>Upcoming plan: {data.plans.find(p => p.id === sub.pendingChange?.planId)?.name} / {sub.pendingChange.interval} on {date(sub.periodEnd)}.</p>}
+      {sub.status === 'Scheduled to Cancel' || accessExpired ?
+        <button disabled={busy || accessExpired} onClick={() => {
+          if (window.confirm(`Resume this subscription? Your next payment is ${date(sub.periodEnd)}.`)) void updateSub(resumeSubscription(sub, data.date))
+        }}>Resume subscription</button> :
+        <button disabled={busy} onClick={() => {
+          if (window.confirm(`Cancel renewal? Access continues until ${date(sub.periodEnd)}.`)) void updateSub(cancelSubscription(sub))
+        }}>Cancel subscription</button>}
+    </div>
+  </>
+  const history = <>{heading('Billing history', 'Your demo payment activity.')}<BillingHistory attempts={data.attempts.filter(a => a.subscriptionId === sub.id)}/></>
+  const mrr = data.customers.reduce((total, c) => { const p = data.plans.find(p => p.id === c.subscription.planId)!; return total + ((c.subscription.status === 'Active' || c.subscription.status === 'Scheduled to Cancel') && c.subscription.periodEnd > data.date ? c.subscription.interval === 'monthly' ? p.monthlyCents : p.annualCents / 12 : 0) }, 0)
+  const adminOverview = <>{heading('A clearer view of your business.', 'Your demo subscription workspace at a glance.')}<div className="grid plans"><div className="card"><p>MRR</p><h2>{money(mrr)}</h2><p>Active + scheduled with access; annual / 12.</p></div><div className="card"><p>Failed attempts</p><h2>{data.attempts.filter(a => a.outcome === 'failed').length}</h2></div><div className="card"><p>Active subscriptions</p><h2>{data.customers.filter(c => c.subscription.status === 'Active').length}</h2></div><div className="card"><p>Past due</p><h2>{data.customers.filter(c => c.subscription.status === 'Past Due').length}</h2></div><div className="card"><p>Customers</p><h2>{data.customers.length}</h2></div></div><h2>Customers</h2>{customerList()}<ActivityList data={data}/></>
+  function customerList() { return <div className="card list">{data!.customers.map(c => <div className="row item" key={c.id}><div><strong>{c.name}</strong><p className="muted">{c.company} · {c.email}</p></div><span className="badge">{c.subscription.status}</span><button className="quiet" onClick={() => void save({ ...data!, customerId: c.id }).then(ok => { if (ok) navigate('/customer/overview') })}>View as customer →</button></div>)}</div> }
+  const paymentIssues = <>{heading('Payment issues', 'Subscriptions that need attention.')}<PaymentIssues data={data} save={save} retry={retryCustomerPayment} busy={busy}/></>
+  return <Routes><Route path="/demo" element={entry}/><Route path="/" element={<Navigate to="/demo" replace/>}/><Route path="/customer/overview" element={shell(overview)}/><Route path="/customer/billing" element={shell(billing)}/><Route path="/customer/change-plan" element={shell(change)}/><Route path="/customer/payment" element={shell(payment)}/><Route path="/customer/settings" element={shell(settings)}/><Route path="/customer/history" element={shell(history)}/><Route path="/admin/overview" element={shell(adminOverview)}/><Route path="/admin/customers" element={shell(<>{heading('Customers', 'Your demo customers and their subscriptions.')}<Directory data={data}/><ActivityList data={data}/></>)}/><Route path="/admin/subscriptions" element={shell(<>{heading('Subscriptions', 'Manage your demo subscriptions.')}<Directory data={data} subscriptions/><ActivityList data={data}/></>)}/><Route path="/admin/plans" element={shell(<>{heading('Plans', 'Your subscription catalog.')}<Catalog data={data} save={save} busy={busy}/></>)}/><Route path="/admin/customers/:id" element={shell(<Detail data={data} save={save} busy={busy}/>)}/><Route path="/admin/subscriptions/:id" element={shell(<Detail data={data} save={save} busy={busy} subscription/>)}/><Route path="/admin/payment-issues" element={shell(paymentIssues)}/><Route path="*" element={shell(<>{heading('Page not found', 'We could not find that page.')}<Link to="/demo">Return to demo</Link></>)}/></Routes>
+}
+
+createRoot(document.getElementById('root')!).render(<BrowserRouter><App /></BrowserRouter>)
