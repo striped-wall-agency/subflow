@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { HashRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { advanceSubscription, cancelSubscription, resumeSubscription, retryPayment, scheduleChange, type Interval, type Subscription } from './domain'
 import { openDatabase, readSnapshot, writeSnapshot } from './storage'
 import './style.css'
@@ -116,4 +116,4 @@ function App() {
   return <Routes><Route path="/demo" element={entry}/><Route path="/" element={<Navigate to="/demo" replace/>}/><Route path="/customer/overview" element={shell(overview)}/><Route path="/customer/billing" element={shell(billing)}/><Route path="/customer/change-plan" element={shell(change)}/><Route path="/customer/payment" element={shell(payment)}/><Route path="/customer/settings" element={shell(settings)}/><Route path="/customer/history" element={shell(history)}/><Route path="/admin/overview" element={shell(adminOverview)}/><Route path="/admin/customers" element={shell(<>{heading('Customers', 'Your demo customers and their subscriptions.')}<Directory data={data}/><ActivityList data={data}/></>)}/><Route path="/admin/subscriptions" element={shell(<>{heading('Subscriptions', 'Manage your demo subscriptions.')}<Directory data={data} subscriptions/><ActivityList data={data}/></>)}/><Route path="/admin/plans" element={shell(<>{heading('Plans', 'Your subscription catalog.')}<Catalog data={data} save={save} busy={busy}/></>)}/><Route path="/admin/customers/:id" element={shell(<Detail data={data} save={save} busy={busy}/>)}/><Route path="/admin/subscriptions/:id" element={shell(<Detail data={data} save={save} busy={busy} subscription/>)}/><Route path="/admin/payment-issues" element={shell(paymentIssues)}/><Route path="*" element={shell(<>{heading('Page not found', 'We could not find that page.')}<Link to="/demo">Return to demo</Link></>)}/></Routes>
 }
 
-createRoot(document.getElementById('root')!).render(<BrowserRouter><App /></BrowserRouter>)
+createRoot(document.getElementById('root')!).render(<HashRouter><App /></HashRouter>)
