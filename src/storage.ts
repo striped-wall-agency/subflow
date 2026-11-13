@@ -22,10 +22,18 @@ export async function readSnapshot<T>(database: IDBDatabase): Promise<T | undefi
   })
 }
 
-export async function writeSnapshot<T>(database: IDBDatabase, snapshot: T): Promise<void> {
+export async function writeSnapshot<T>(database: IDBDatabase, snapshot: T, expectedRevision?: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = database.transaction(STORE, 'readwrite')
-    transaction.objectStore(STORE).put(snapshot, 'snapshot')
+    const store = transaction.objectStore(STORE)
+    const request = store.get('snapshot')
+    request.onsuccess = () => {
+      if (expectedRevision !== undefined && (request.result?.revision ?? 0) !== expectedRevision) {
+        transaction.abort()
+        return
+      }
+      store.put(snapshot, 'snapshot')
+    }
     transaction.oncomplete = () => resolve()
     transaction.onabort = () => reject(transaction.error)
     transaction.onerror = () => reject(transaction.error)
