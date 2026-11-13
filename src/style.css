@@ -3,12 +3,12 @@
 .mobile-menu{display:none}nav a[aria-current=page]{background:#315044}@media(max-width:768px){.mobile-menu{display:block;margin-top:12px;border:1px solid #9cb5a7}aside nav{display:none}aside nav.open{display:grid;margin-top:12px;overflow:visible}aside nav a{min-height:44px}.switch{display:block;margin-top:12px}}
 
 @media (min-width: 769px) {
-  .customer-row {
+  .directory-row {
     display: grid;
     grid-template-columns: minmax(0, 56%) minmax(0, 1fr) 10rem;
   }
 
-  .customer-row > .badge {
+  .directory-row > .badge {
     justify-self: end;
   }
 }
