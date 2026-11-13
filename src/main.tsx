@@ -90,7 +90,23 @@ function App() {
   const paymentForm = paymentDraft ?? customer
   const payment = <>{heading('Payment details', 'Use a fictional payment method for this demo.')}<form className="card" onSubmit={e => { e.preventDefault(); void save({ ...data, customers: data.customers.map(c => c.id === customer.id ? paymentForm : c) }).then(ok => { if (ok) setPaymentDraft(undefined) }) }}><label>Demo payment method<select value={paymentForm.method} onChange={e => setPaymentDraft({ ...paymentForm, method: e.target.value })}><option>Visa •4242</option><option>Mastercard •4444</option><option>Failing method</option></select></label><label>Billing name<input required value={paymentForm.billingName ?? paymentForm.name} onChange={e => setPaymentDraft({ ...paymentForm, billingName: e.target.value })} /></label><label>Billing email<input type="email" required value={paymentForm.billingEmail ?? paymentForm.email} onChange={e => setPaymentDraft({ ...paymentForm, billingEmail: e.target.value })} /></label><label>Billing address<textarea required value={paymentForm.address ?? ''} onChange={e => setPaymentDraft({ ...paymentForm, address: e.target.value })} /></label><p className="muted">No real card details are collected.</p><div className="actions"><button disabled={busy}>Save payment details</button><button type="button" className="quiet" onClick={() => setPaymentDraft(undefined)}>Cancel</button></div></form></>
 
-  const settings = <>{heading('Subscription settings', 'Manage your renewal preferences.')}<div className="card"><h2>Renewal</h2><p>{sub.renewalEnabled ? `Your subscription renews on ${date(sub.periodEnd)}.` : 'Automatic renewal is off.'}</p>{sub.status === 'Scheduled to Cancel' ? <button disabled={busy || data.date >= sub.periodEnd} onClick={() => { if (window.confirm('Resume this subscription?')) void updateSub(resumeSubscription(sub, data.date)) }}>Resume subscription</button> : <button disabled={busy || sub.status === 'Canceled'} onClick={() => { if (window.confirm(`Cancel renewal? Access continues until ${date(sub.periodEnd)}.`)) void updateSub(cancelSubscription(sub)) }}>Cancel subscription</button>}</div></>
+  const accessExpired = sub.status === 'Canceled' || (!sub.renewalEnabled && data.date >= sub.periodEnd)
+  const settings = <>
+    {heading('Subscription settings', 'Manage your renewal preferences.')}
+    <div className="card">
+      <h2>Renewal</h2>
+      <p>{sub.renewalEnabled ? `Your subscription renews on ${date(sub.periodEnd)}.` : 'Automatic renewal is off.'}</p>
+      <p>{accessExpired ? `Access ended on ${date(sub.periodEnd)}. This subscription cannot be resumed.` : `Access continues until ${date(sub.periodEnd)}.`}</p>
+      {sub.pendingChange && <p>Upcoming plan: {data.plans.find(p => p.id === sub.pendingChange?.planId)?.name} / {sub.pendingChange.interval} on {date(sub.periodEnd)}.</p>}
+      {sub.status === 'Scheduled to Cancel' || accessExpired ?
+        <button disabled={busy || accessExpired} onClick={() => {
+          if (window.confirm(`Resume this subscription? Your next payment is ${date(sub.periodEnd)}.`)) void updateSub(resumeSubscription(sub, data.date))
+        }}>Resume subscription</button> :
+        <button disabled={busy} onClick={() => {
+          if (window.confirm(`Cancel renewal? Access continues until ${date(sub.periodEnd)}.`)) void updateSub(cancelSubscription(sub))
+        }}>Cancel subscription</button>}
+    </div>
+  </>
   const history = <>{heading('Billing history', 'Your demo payment activity.')}<BillingHistory attempts={data.attempts.filter(a => a.subscriptionId === sub.id)}/></>
   const mrr = data.customers.reduce((total, c) => { const p = data.plans.find(p => p.id === c.subscription.planId)!; return total + ((c.subscription.status === 'Active' || c.subscription.status === 'Scheduled to Cancel') && c.subscription.periodEnd > data.date ? c.subscription.interval === 'monthly' ? p.monthlyCents : p.annualCents / 12 : 0) }, 0)
   const adminOverview = <>{heading('A clearer view of your business.', 'Your demo subscription workspace at a glance.')}<div className="grid plans"><div className="card"><p>MRR</p><h2>{money(mrr)}</h2><p>Active + scheduled with access; annual / 12.</p></div><div className="card"><p>Failed attempts</p><h2>{data.attempts.filter(a => a.outcome === 'failed').length}</h2></div><div className="card"><p>Active subscriptions</p><h2>{data.customers.filter(c => c.subscription.status === 'Active').length}</h2></div><div className="card"><p>Past due</p><h2>{data.customers.filter(c => c.subscription.status === 'Past Due').length}</h2></div><div className="card"><p>Customers</p><h2>{data.customers.length}</h2></div></div><h2>Customers</h2>{customerList()}<ActivityList data={data}/></>
